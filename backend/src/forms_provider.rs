@@ -92,6 +92,9 @@ impl FieldsProvider {
         module.function_meta(Self::set)?;
         module.function_meta(Self::update)?;
 
+        module.function_meta(Field::set_value)?;
+        module.function_meta(Field::get_value)?;
+
         module.associated_function(
             &Protocol::INDEX_SET,
             |provider: &mut FieldsProvider, name: String, field: Field| {

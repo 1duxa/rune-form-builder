@@ -55,7 +55,7 @@ mod test {
     use sqlx::{Column, Row, TypeInfo, postgres::PgPoolOptions, types::BigDecimal};
 
     use crate::{
-        form_types::{DbValue, Field},
+        form_types::{DbType, DbValue, Field},
         forms_provider::FieldsProvider,
         vm::RuneProvider,
     };
@@ -76,33 +76,42 @@ mod test {
 
             for col in row.columns() {
                 let col_name = col.name();
-                let mut field = Field::new(0, 0, "Int", col_name);
-                field.value = match col.type_info().name() {
+                let (value, value_type) = match col.type_info().name() {
                     "INT2" => match row.try_get::<i16, _>(col_name) {
-                        Ok(value) => DbValue::Int(value.into()),
+                        Ok(value) => (DbValue::Int(value.into()), DbType::Int),
                         Err(e) => {
                             println!("err {e}");
                             continue;
                         }
                     },
                     "INT4" => match row.try_get::<i32, _>(col_name) {
-                        Ok(value) => DbValue::Int(value.into()),
+                        Ok(value) => (DbValue::Int(value.into()), DbType::Int),
                         Err(e) => {
                             println!("err {e}");
                             continue;
                         }
                     },
                     "INT8" => match row.try_get::<i64, _>(col_name) {
-                        Ok(value) => DbValue::Int(value),
+                        Ok(value) => (DbValue::Int(value), DbType::Int),
                         Err(e) => {
                             println!("err {e}");
                             continue;
                         }
                     },
-                    "FLOAT4" | "FLOAT8" => {
+                    "FLOAT4" => {
+                        println!("matched numberic {col_name}");
+                        match row.try_get::<f32, _>(col_name) {
+                            Ok(value) => (DbValue::Float(value.into()), DbType::Float),
+                            Err(e) => {
+                                println!("err{e}");
+                                continue;
+                            }
+                        }
+                    }
+                    "FLOAT8" => {
                         println!("matched numberic {col_name}");
                         match row.try_get::<f64, _>(col_name) {
-                            Ok(value) => DbValue::Float(value),
+                            Ok(value) => (DbValue::Float(value.into()), DbType::Float),
                             Err(e) => {
                                 println!("err{e}");
                                 continue;
@@ -110,20 +119,23 @@ mod test {
                         }
                     }
                     "NUMERIC" => match row.try_get::<BigDecimal, _>(col_name) {
-                        Ok(value) => DbValue::Float(value.to_string().parse().unwrap()),
+                        // trash but idk what to do with it for now
+                        Ok(value) => (
+                            DbValue::Float(value.to_string().parse().unwrap()),
+                            DbType::Float,
+                        ),
                         Err(e) => {
                             println!("err{e}");
                             continue;
                         }
                     },
-
                     "BOOL" => match row.try_get::<bool, _>(col_name) {
-                        Ok(value) => DbValue::Bool(value),
+                        Ok(value) => (DbValue::Bool(value), DbType::Bool),
                         _ => continue,
                     },
                     "TEXT" | "VARCHAR" | "NAME" | "BPCHAR" => {
                         match row.try_get::<String, _>(col_name) {
-                            Ok(value) => DbValue::Text(value),
+                            Ok(value) => (DbValue::Text(value), DbType::Text),
                             _ => continue,
                         }
                     }
@@ -132,6 +144,8 @@ mod test {
                         continue;
                     }
                 };
+                let field = Field::new_raw(0, 0, value, value_type, col_name);
+
                 _ = fields.insert(col_name.to_string(), field);
             }
 
@@ -140,16 +154,16 @@ mod test {
             let code = r#"
                 pub fn form_init(fields) {
                     let success = fields.update("name", |field| {
-                        field.value = DbValue::Int(25);
+                        field.set_value("TEST");
                         field.placeholder = Some("asddasdas");
                         field
                     });
-                    let success2 = fields.valid("name", |field| {
-                        match field.on_change {
-                            DbValue::Int(n) => n == 25,
-                            _ => false,
-                        }
+
+                    fields.on_change("name", |field| {
+                        let v = field.get_value();
+                        v == "TEST"
                     });
+
                     fields
                 }
             "#;

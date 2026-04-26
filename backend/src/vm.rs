@@ -52,10 +52,10 @@ impl RuneProvider {
 #[cfg(test)]
 mod test {
     use anyhow::Result;
-    use sqlx::{Column, Row, TypeInfo, postgres::PgPoolOptions};
+    use sqlx::{Column, Row, TypeInfo, postgres::PgPoolOptions, types::BigDecimal};
 
     use crate::{
-        form_types::{BoolField, DecimalField, FormField, IntField, TextField},
+        form_types::{DbValue, Field},
         forms_provider::FieldsProvider,
         vm::RuneProvider,
     };
@@ -75,43 +75,55 @@ mod test {
             let mut fields = FieldsProvider::new();
 
             for col in row.columns() {
-                let col_name = col.name().to_string();
-                let field = match col.type_info().name() {
-                    "INT2" | "INT4" | "INT8" => {
-                        match row.try_get::<i64, _>(col_name.as_str()).ok() {
-                            Some(value) => FormField::Int(IntField {
-                                name: col_name.clone(),
-                                value,
-                                ..Default::default()
-                            }),
-                            _ => continue,
+                let col_name = col.name();
+                let mut field = Field::new(0, 0, "Int", col_name);
+                field.value = match col.type_info().name() {
+                    "INT2" => match row.try_get::<i16, _>(col_name) {
+                        Ok(value) => DbValue::Int(value.into()),
+                        Err(e) => {
+                            println!("err {e}");
+                            continue;
+                        }
+                    },
+                    "INT4" => match row.try_get::<i32, _>(col_name) {
+                        Ok(value) => DbValue::Int(value.into()),
+                        Err(e) => {
+                            println!("err {e}");
+                            continue;
+                        }
+                    },
+                    "INT8" => match row.try_get::<i64, _>(col_name) {
+                        Ok(value) => DbValue::Int(value),
+                        Err(e) => {
+                            println!("err {e}");
+                            continue;
+                        }
+                    },
+                    "FLOAT4" | "FLOAT8" => {
+                        println!("matched numberic {col_name}");
+                        match row.try_get::<f64, _>(col_name) {
+                            Ok(value) => DbValue::Float(value),
+                            Err(e) => {
+                                println!("err{e}");
+                                continue;
+                            }
                         }
                     }
-                    "FLOAT4" | "FLOAT8" | "NUMERIC" => {
-                        match row.try_get::<f64, _>(col_name.as_str()).ok() {
-                            Some(value) => FormField::Decimal(DecimalField {
-                                name: col_name.clone(),
-                                value,
-                                ..Default::default()
-                            }),
-                            _ => continue,
+                    "NUMERIC" => match row.try_get::<BigDecimal, _>(col_name) {
+                        Ok(value) => DbValue::Float(value.to_string().parse().unwrap()),
+                        Err(e) => {
+                            println!("err{e}");
+                            continue;
                         }
-                    }
-                    "BOOL" => match row.try_get::<bool, _>(col_name.as_str()).ok() {
-                        Some(value) => FormField::Bool(BoolField {
-                            name: col_name.clone(),
-                            value,
-                            ..Default::default()
-                        }),
+                    },
+
+                    "BOOL" => match row.try_get::<bool, _>(col_name) {
+                        Ok(value) => DbValue::Bool(value),
                         _ => continue,
                     },
                     "TEXT" | "VARCHAR" | "NAME" | "BPCHAR" => {
-                        match row.try_get::<String, _>(col_name.as_str()).ok() {
-                            Some(value) => FormField::Text(TextField {
-                                name: col_name.clone(),
-                                value,
-                                ..Default::default()
-                            }),
+                        match row.try_get::<String, _>(col_name) {
+                            Ok(value) => DbValue::Text(value),
                             _ => continue,
                         }
                     }
@@ -120,23 +132,23 @@ mod test {
                         continue;
                     }
                 };
-                _ = fields.insert(col_name, field);
+                _ = fields.insert(col_name.to_string(), field);
             }
 
             println!("Row {} fields created: {:?}", row_idx, fields.fields.keys());
 
             let code = r#"
                 pub fn form_init(fields) {
-                    let success = fields.update_text("name", |field| {
-                        field.value = "asd";
+                    let success = fields.update("name", |field| {
+                        field.value = DbValue::Int(25);
                         field.placeholder = Some("asddasdas");
                         field
                     });
                     let success2 = fields.valid("name", |field| {
-                        if (field.value == "asd") {
-                            return true;
+                        match field.on_change {
+                            DbValue::Int(n) => n == 25,
+                            _ => false,
                         }
-                        false
                     });
                     fields
                 }
@@ -154,11 +166,9 @@ mod test {
                 .into_ref::<FieldsProvider>()
                 .unwrap();
             println!("{:#?}", fields1);
-            let int_field: TextField = fields1
-                .__rune_fn__get_text("name")
-                .expect("Field should exist");
+            let int_field: Field = fields1.get_field("name").expect("Field should exist");
             println!("Field using Rust get method: {:#?}", int_field);
-            println!("Value: {}", int_field.value);
+            println!("Value: {:#?}", int_field.value);
 
             let is_valid = &fields1.field_valids["name"]
                 .call::<bool>((&int_field,))

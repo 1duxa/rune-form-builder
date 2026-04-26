@@ -4,7 +4,6 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::info;
 
-mod form_fetcher;
 mod form_types;
 mod forms_provider;
 mod vm;
